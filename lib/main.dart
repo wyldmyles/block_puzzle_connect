@@ -291,6 +291,7 @@ class _GamePageState extends State<GamePage> {
   int? _selectedPieceIndex;
   int _pieceCounter = 0;
   BoardLayoutMetrics? _boardLayoutMetrics;
+  bool _isGameOver = false;
 
   @override
   void initState() {
@@ -341,6 +342,7 @@ class _GamePageState extends State<GamePage> {
 
   void _resetGame({required bool selectFirst}) {
     _score = 0;
+    _isGameOver = false;
     _resetBoardCells();
     _generateTrayPieces(selectFirst: selectFirst);
   }
@@ -367,7 +369,7 @@ class _GamePageState extends State<GamePage> {
   }
 
   void _onPieceSelected(int index) {
-    if (_activePieces[index] == null) {
+    if (_isGameOver || _activePieces[index] == null) {
       return;
     }
     setState(() => _selectedPieceIndex = index);
@@ -397,6 +399,10 @@ class _GamePageState extends State<GamePage> {
     required int anchorCol,
     int? trayIndex,
   }) {
+    if (_isGameOver) {
+      return;
+    }
+
     final slotIndex = trayIndex ?? _indexForPieceId(piece.id);
     if (slotIndex == null || _activePieces[slotIndex]?.id != piece.id) {
       return;
@@ -409,13 +415,14 @@ class _GamePageState extends State<GamePage> {
 
     setState(() {
       _placePiece(piece, anchorRow, anchorCol);
-      _activePieces[slotIndex] = null;
 
       final clearedLines = _clearCompletedLines();
       _score += clearedLines * kLineClearScore;
 
+      _activePieces[slotIndex] = null;
       _selectedPieceIndex = _firstAvailablePieceIndex();
       _refillTrayIfNeeded();
+      _updateGameOverState();
     });
   }
 
@@ -434,6 +441,30 @@ class _GamePageState extends State<GamePage> {
       }
     }
     return true;
+  }
+
+  bool _canPieceFitAnywhere(BlockPiece piece) {
+    for (var row = 0; row < _boardConfig.rows; row++) {
+      for (var col = 0; col < _boardConfig.columns; col++) {
+        if (_canPlacePiece(piece, row, col)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  bool _canAnyActivePieceFit() {
+    for (final piece in _activePieces) {
+      if (piece != null && _canPieceFitAnywhere(piece)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void _updateGameOverState() {
+    _isGameOver = !_canAnyActivePieceFit();
   }
 
   void _placePiece(BlockPiece piece, int anchorRow, int anchorCol) {
@@ -602,6 +633,10 @@ class _GamePageState extends State<GamePage> {
   }
 
   void _onBoardCellTapped(int row, int col) {
+    if (_isGameOver) {
+      return;
+    }
+
     final selectedIndex = _selectedPieceIndex;
     if (selectedIndex == null) {
       return;
@@ -621,6 +656,10 @@ class _GamePageState extends State<GamePage> {
   }
 
   void _onPieceDropped(TrayPieceDragData data, int row, int col) {
+    if (_isGameOver) {
+      return;
+    }
+
     _tryPlacePiece(
       piece: data.piece,
       anchorRow: row,
@@ -657,6 +696,43 @@ class _GamePageState extends State<GamePage> {
                 style: Theme.of(context).textTheme.headlineSmall,
                 textAlign: TextAlign.center,
               ),
+              if (_isGameOver) ...[
+                const SizedBox(height: 12),
+                Card(
+                  color: colorScheme.errorContainer,
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      children: [
+                        Text(
+                          'Game Over',
+                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                color: colorScheme.onErrorContainer,
+                                fontWeight: FontWeight.bold,
+                              ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'No space left for any piece.',
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                color: colorScheme.onErrorContainer,
+                              ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Final score: $_score',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: colorScheme.onErrorContainer,
+                              ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 12),
               Text(
                 'Board',
@@ -686,7 +762,8 @@ class _GamePageState extends State<GamePage> {
                   child: _BoardView(
                     config: _boardConfig,
                     occupied: _occupied,
-                    selectedPiece: _selectedPiece,
+                    selectedPiece: _isGameOver ? null : _selectedPiece,
+                    isGameOver: _isGameOver,
                     onCellTapped: _onBoardCellTapped,
                     onPieceDropped: _onPieceDropped,
                     onLayoutMetricsChanged: _onBoardLayoutMetricsChanged,
@@ -710,8 +787,11 @@ class _GamePageState extends State<GamePage> {
                     selected: selected,
                     emptyColor: colorScheme.surfaceContainerHighest,
                     boardLayoutMetrics: _boardLayoutMetrics,
-                    onTap: piece == null ? null : () => _onPieceSelected(index),
-                    onDragStarted: piece == null
+                    isGameOver: _isGameOver,
+                    onTap: piece == null || _isGameOver
+                        ? null
+                        : () => _onPieceSelected(index),
+                    onDragStarted: piece == null || _isGameOver
                         ? null
                         : () => _onPieceSelected(index),
                   );
@@ -736,6 +816,7 @@ class _BoardView extends StatelessWidget {
     required this.config,
     required this.occupied,
     required this.selectedPiece,
+    required this.isGameOver,
     required this.onCellTapped,
     required this.onPieceDropped,
     required this.onLayoutMetricsChanged,
@@ -744,6 +825,7 @@ class _BoardView extends StatelessWidget {
   final BoardConfig config;
   final List<List<Color?>> occupied;
   final BlockPiece? selectedPiece;
+  final bool isGameOver;
   final void Function(int row, int col) onCellTapped;
   final void Function(TrayPieceDragData data, int row, int col) onPieceDropped;
   final ValueChanged<BoardLayoutMetrics> onLayoutMetricsChanged;
@@ -820,7 +902,7 @@ class _BoardView extends StatelessWidget {
                     _wouldPlacementFit(row, col);
 
                 return DragTarget<TrayPieceDragData>(
-                  onWillAcceptWithDetails: (_) => true,
+                  onWillAcceptWithDetails: (_) => !isGameOver,
                   onAcceptWithDetails: (details) {
                     onPieceDropped(details.data, row, col);
                   },
@@ -828,7 +910,7 @@ class _BoardView extends StatelessWidget {
                     return Material(
                       color: Colors.transparent,
                       child: InkWell(
-                        onTap: selectedPiece == null
+                        onTap: isGameOver || selectedPiece == null
                             ? null
                             : () => onCellTapped(row, col),
                         borderRadius: BorderRadius.circular(2),
@@ -868,6 +950,7 @@ class _PieceTraySlot extends StatelessWidget {
     required this.selected,
     required this.emptyColor,
     required this.boardLayoutMetrics,
+    required this.isGameOver,
     required this.onTap,
     required this.onDragStarted,
   });
@@ -877,6 +960,7 @@ class _PieceTraySlot extends StatelessWidget {
   final bool selected;
   final Color emptyColor;
   final BoardLayoutMetrics? boardLayoutMetrics;
+  final bool isGameOver;
   final VoidCallback? onTap;
   final VoidCallback? onDragStarted;
 
@@ -916,6 +1000,25 @@ class _PieceTraySlot extends StatelessWidget {
       return _slotContainer(context);
     }
 
+    final slotContent = Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: _slotContainer(
+          context,
+          child: Opacity(
+            opacity: isGameOver ? 0.5 : 1,
+            child: _PiecePreview(piece: piece),
+          ),
+        ),
+      ),
+    );
+
+    if (isGameOver) {
+      return slotContent;
+    }
+
     final dragData = TrayPieceDragData(piece: piece, trayIndex: trayIndex);
     final metrics = boardLayoutMetrics;
 
@@ -946,17 +1049,7 @@ class _PieceTraySlot extends StatelessWidget {
         opacity: 0.35,
         emptyAppearance: true,
       ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(8),
-          child: _slotContainer(
-            context,
-            child: _PiecePreview(piece: piece),
-          ),
-        ),
-      ),
+      child: slotContent,
     );
   }
 }
