@@ -83,21 +83,41 @@ class BlockPiece {
   final Color color;
   final String shapeId;
 
-  int get width {
-    var maxCol = 0;
+  int get minRow {
+    var min = cells.first.row;
     for (final cell in cells) {
-      maxCol = math.max(maxCol, cell.col);
+      min = math.min(min, cell.row);
     }
-    return maxCol + 1;
+    return min;
   }
 
-  int get height {
-    var maxRow = 0;
+  int get minCol {
+    var min = cells.first.col;
     for (final cell in cells) {
-      maxRow = math.max(maxRow, cell.row);
+      min = math.min(min, cell.col);
     }
-    return maxRow + 1;
+    return min;
   }
+
+  int get maxRow {
+    var max = cells.first.row;
+    for (final cell in cells) {
+      max = math.max(max, cell.row);
+    }
+    return max;
+  }
+
+  int get maxCol {
+    var max = cells.first.col;
+    for (final cell in cells) {
+      max = math.max(max, cell.col);
+    }
+    return max;
+  }
+
+  int get width => maxCol - minCol + 1;
+
+  int get height => maxRow - minRow + 1;
 }
 
 /// Starting shape definitions for piece generation.
@@ -129,6 +149,18 @@ const List<ShapeDefinition> kShapeCatalog = [
     CellOffset(0, 1),
     CellOffset(1, 0),
     CellOffset(1, 1),
+  ]),
+  ShapeDefinition('diag_nw_se_2', [CellOffset(0, 0), CellOffset(1, 1)]),
+  ShapeDefinition('diag_ne_sw_2', [CellOffset(0, 1), CellOffset(1, 0)]),
+  ShapeDefinition('diag_nw_se_3', [
+    CellOffset(0, 0),
+    CellOffset(1, 1),
+    CellOffset(2, 2),
+  ]),
+  ShapeDefinition('diag_ne_sw_3', [
+    CellOffset(0, 2),
+    CellOffset(1, 1),
+    CellOffset(2, 0),
   ]),
 ];
 
@@ -741,8 +773,8 @@ class _PiecePreview extends StatelessWidget {
             children: [
               for (final cell in piece.cells)
                 Positioned(
-                  left: cell.col * cellSize,
-                  top: cell.row * cellSize,
+                  left: (cell.col - piece.minCol) * cellSize,
+                  top: (cell.row - piece.minRow) * cellSize,
                   width: cellSize,
                   height: cellSize,
                   child: DecoratedBox(
