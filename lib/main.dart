@@ -120,6 +120,17 @@ class BlockPiece {
   int get height => maxRow - minRow + 1;
 }
 
+/// Drag payload linking a tray piece to its slot index.
+class TrayPieceDragData {
+  const TrayPieceDragData({
+    required this.piece,
+    required this.trayIndex,
+  });
+
+  final BlockPiece piece;
+  final int trayIndex;
+}
+
 /// Starting shape definitions for piece generation.
 class ShapeDefinition {
   const ShapeDefinition(this.id, this.cells);
@@ -280,6 +291,52 @@ class _GamePageState extends State<GamePage> {
       return;
     }
     setState(() => _selectedPieceIndex = index);
+  }
+
+  int? _indexForPieceId(String pieceId) {
+    for (var i = 0; i < _activePieces.length; i++) {
+      if (_activePieces[i]?.id == pieceId) {
+        return i;
+      }
+    }
+    return null;
+  }
+
+  void _showDoesNotFitMessage() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('That piece does not fit there.'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
+  void _tryPlacePiece({
+    required BlockPiece piece,
+    required int anchorRow,
+    required int anchorCol,
+    int? trayIndex,
+  }) {
+    final slotIndex = trayIndex ?? _indexForPieceId(piece.id);
+    if (slotIndex == null || _activePieces[slotIndex]?.id != piece.id) {
+      return;
+    }
+
+    if (!_canPlacePiece(piece, anchorRow, anchorCol)) {
+      _showDoesNotFitMessage();
+      return;
+    }
+
+    setState(() {
+      _placePiece(piece, anchorRow, anchorCol);
+      _activePieces[slotIndex] = null;
+
+      final clearedLines = _clearCompletedLines();
+      _score += clearedLines * kLineClearScore;
+
+      _selectedPieceIndex = _firstAvailablePieceIndex();
+      _refillTrayIfNeeded();
+    });
   }
 
   bool _canPlacePiece(BlockPiece piece, int anchorRow, int anchorCol) {
@@ -475,26 +532,21 @@ class _GamePageState extends State<GamePage> {
       return;
     }
 
-    if (!_canPlacePiece(piece, row, col)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('That piece does not fit there.'),
-          duration: Duration(seconds: 2),
-        ),
-      );
-      return;
-    }
+    _tryPlacePiece(
+      piece: piece,
+      anchorRow: row,
+      anchorCol: col,
+      trayIndex: selectedIndex,
+    );
+  }
 
-    setState(() {
-      _placePiece(piece, row, col);
-      _activePieces[selectedIndex] = null;
-
-      final clearedLines = _clearCompletedLines();
-      _score += clearedLines * kLineClearScore;
-
-      _selectedPieceIndex = _firstAvailablePieceIndex();
-      _refillTrayIfNeeded();
-    });
+  void _onPieceDropped(TrayPieceDragData data, int row, int col) {
+    _tryPlacePiece(
+      piece: data.piece,
+      anchorRow: row,
+      anchorCol: col,
+      trayIndex: data.trayIndex,
+    );
   }
 
   BlockPiece? get _selectedPiece {
@@ -556,6 +608,7 @@ class _GamePageState extends State<GamePage> {
                     occupied: _occupied,
                     selectedPiece: _selectedPiece,
                     onCellTapped: _onBoardCellTapped,
+                    onPieceDropped: _onPieceDropped,
                   ),
                 ),
               ),
@@ -572,9 +625,13 @@ class _GamePageState extends State<GamePage> {
                   final selected = _selectedPieceIndex == index;
                   return _PieceTraySlot(
                     piece: piece,
+                    trayIndex: index,
                     selected: selected,
                     emptyColor: colorScheme.surfaceContainerHighest,
                     onTap: piece == null ? null : () => _onPieceSelected(index),
+                    onDragStarted: piece == null
+                        ? null
+                        : () => _onPieceSelected(index),
                   );
                 }),
               ),
@@ -598,12 +655,14 @@ class _BoardView extends StatelessWidget {
     required this.occupied,
     required this.selectedPiece,
     required this.onCellTapped,
+    required this.onPieceDropped,
   });
 
   final BoardConfig config;
   final List<List<Color?>> occupied;
   final BlockPiece? selectedPiece;
   final void Function(int row, int col) onCellTapped;
+  final void Function(TrayPieceDragData data, int row, int col) onPieceDropped;
 
   bool _wouldPlacementFit(int anchorRow, int anchorCol) {
     final piece = selectedPiece;
@@ -672,30 +731,38 @@ class _BoardView extends StatelessWidget {
                 final canPreview = selectedPiece != null &&
                     _wouldPlacementFit(row, col);
 
-                return Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    onTap: selectedPiece == null
-                        ? null
-                        : () => onCellTapped(row, col),
-                    borderRadius: BorderRadius.circular(2),
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: isOccupied
-                            ? cellColor
-                            : canPreview
-                                ? colorScheme.primary.withValues(alpha: 0.12)
-                                : colorScheme.surface,
+                return DragTarget<TrayPieceDragData>(
+                  onWillAcceptWithDetails: (_) => true,
+                  onAcceptWithDetails: (details) {
+                    onPieceDropped(details.data, row, col);
+                  },
+                  builder: (context, candidateData, rejectedData) {
+                    return Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: selectedPiece == null
+                            ? null
+                            : () => onCellTapped(row, col),
                         borderRadius: BorderRadius.circular(2),
-                        border: Border.all(
-                          color: canPreview
-                              ? colorScheme.primary
-                              : colorScheme.outlineVariant,
-                          width: canPreview ? 1.5 : 1,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: isOccupied
+                                ? cellColor
+                                : canPreview
+                                    ? colorScheme.primary.withValues(alpha: 0.12)
+                                    : colorScheme.surface,
+                            borderRadius: BorderRadius.circular(2),
+                            border: Border.all(
+                              color: canPreview
+                                  ? colorScheme.primary
+                                  : colorScheme.outlineVariant,
+                              width: canPreview ? 1.5 : 1,
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                  ),
+                    );
+                  },
                 );
               },
             ),
@@ -709,43 +776,88 @@ class _BoardView extends StatelessWidget {
 class _PieceTraySlot extends StatelessWidget {
   const _PieceTraySlot({
     required this.piece,
+    required this.trayIndex,
     required this.selected,
     required this.emptyColor,
     required this.onTap,
+    required this.onDragStarted,
   });
 
   final BlockPiece? piece;
+  final int trayIndex;
   final bool selected;
   final Color emptyColor;
   final VoidCallback? onTap;
+  final VoidCallback? onDragStarted;
+
+  Widget _slotContainer(
+    BuildContext context, {
+    Widget? child,
+    double opacity = 1,
+    bool emptyAppearance = false,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final showEmpty = emptyAppearance || piece == null;
+
+    return Opacity(
+      opacity: opacity,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        width: 72,
+        height: 72,
+        padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          color: showEmpty ? emptyColor.withValues(alpha: 0.45) : null,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: selected ? colorScheme.primary : colorScheme.outline,
+            width: selected ? 3 : 1,
+          ),
+        ),
+        child: child,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
+    final piece = this.piece;
+    if (piece == null) {
+      return _slotContainer(context);
+    }
 
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
+    final dragData = TrayPieceDragData(piece: piece, trayIndex: trayIndex);
+
+    return Draggable<TrayPieceDragData>(
+      data: dragData,
+      onDragStarted: onDragStarted,
+      feedback: Material(
+        elevation: 6,
         borderRadius: BorderRadius.circular(8),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
+        color: Theme.of(context).colorScheme.surface,
+        child: SizedBox(
           width: 72,
           height: 72,
-          padding: const EdgeInsets.all(6),
-          decoration: BoxDecoration(
-            color: piece == null ? emptyColor.withValues(alpha: 0.45) : null,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: selected
-                  ? colorScheme.primary
-                  : colorScheme.outline,
-              width: selected ? 3 : 1,
-            ),
+          child: Padding(
+            padding: const EdgeInsets.all(6),
+            child: _PiecePreview(piece: piece),
           ),
-          child: piece == null
-              ? null
-              : _PiecePreview(piece: piece!),
+        ),
+      ),
+      childWhenDragging: _slotContainer(
+        context,
+        opacity: 0.35,
+        emptyAppearance: true,
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(8),
+          child: _slotContainer(
+            context,
+            child: _PiecePreview(piece: piece),
+          ),
         ),
       ),
     );
