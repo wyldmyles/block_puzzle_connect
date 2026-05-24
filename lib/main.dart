@@ -52,6 +52,86 @@ const BoardConfig kDefaultBoardConfig = BoardConfig(
 
 const int kLineClearScore = 10;
 const int kTraySize = 3;
+const double kBoardGridPadding = 4;
+const double kBoardGridSpacing = 2;
+
+/// Cell dimensions derived from the rendered board grid.
+class BoardLayoutMetrics {
+  const BoardLayoutMetrics({
+    required this.cellWidth,
+    required this.cellHeight,
+    this.crossAxisSpacing = kBoardGridSpacing,
+    this.mainAxisSpacing = kBoardGridSpacing,
+  });
+
+  final double cellWidth;
+  final double cellHeight;
+  final double crossAxisSpacing;
+  final double mainAxisSpacing;
+
+  static ({double boardWidth, double boardHeight}) boardDimensions({
+    required BoardConfig config,
+    required double maxWidth,
+    required double maxHeight,
+  }) {
+    final maxSide = math.min(maxWidth, maxHeight);
+    final aspectRatio = config.columns / config.rows;
+
+    if (aspectRatio >= 1) {
+      return (boardWidth: maxSide, boardHeight: maxSide / aspectRatio);
+    }
+    return (boardWidth: maxSide * aspectRatio, boardHeight: maxSide);
+  }
+
+  factory BoardLayoutMetrics.fromBoardSize({
+    required BoardConfig config,
+    required double boardWidth,
+    required double boardHeight,
+  }) {
+    final innerWidth = boardWidth - kBoardGridPadding * 2;
+    final innerHeight = boardHeight - kBoardGridPadding * 2;
+    final cellWidth =
+        (innerWidth - kBoardGridSpacing * (config.columns - 1)) / config.columns;
+    final cellHeight =
+        (innerHeight - kBoardGridSpacing * (config.rows - 1)) / config.rows;
+
+    return BoardLayoutMetrics(
+      cellWidth: cellWidth,
+      cellHeight: cellHeight,
+    );
+  }
+
+  double pieceWidth(int columnSpan) =>
+      columnSpan * cellWidth + math.max(0, columnSpan - 1) * crossAxisSpacing;
+
+  double pieceHeight(int rowSpan) =>
+      rowSpan * cellHeight + math.max(0, rowSpan - 1) * mainAxisSpacing;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BoardLayoutMetrics &&
+          cellWidth == other.cellWidth &&
+          cellHeight == other.cellHeight &&
+          crossAxisSpacing == other.crossAxisSpacing &&
+          mainAxisSpacing == other.mainAxisSpacing;
+
+  @override
+  int get hashCode => Object.hash(
+        cellWidth,
+        cellHeight,
+        crossAxisSpacing,
+        mainAxisSpacing,
+      );
+}
+
+Offset _pieceAnchorDragAnchorStrategy(
+  Draggable<Object> draggable,
+  BuildContext context,
+  Offset position,
+) {
+  return position;
+}
 
 /// A cell offset relative to a piece anchor (top-left).
 class CellOffset {
@@ -218,6 +298,7 @@ class _GamePageState extends State<GamePage> {
   late List<BlockPiece?> _activePieces;
   int? _selectedPieceIndex;
   int _pieceCounter = 0;
+  BoardLayoutMetrics? _boardLayoutMetrics;
 
   @override
   void initState() {
@@ -284,6 +365,13 @@ class _GamePageState extends State<GamePage> {
 
   void _onRestart() {
     setState(() => _resetGame(selectFirst: true));
+  }
+
+  void _onBoardLayoutMetricsChanged(BoardLayoutMetrics metrics) {
+    if (_boardLayoutMetrics == metrics) {
+      return;
+    }
+    setState(() => _boardLayoutMetrics = metrics);
   }
 
   void _onPieceSelected(int index) {
@@ -609,6 +697,7 @@ class _GamePageState extends State<GamePage> {
                     selectedPiece: _selectedPiece,
                     onCellTapped: _onBoardCellTapped,
                     onPieceDropped: _onPieceDropped,
+                    onLayoutMetricsChanged: _onBoardLayoutMetricsChanged,
                   ),
                 ),
               ),
@@ -628,6 +717,7 @@ class _GamePageState extends State<GamePage> {
                     trayIndex: index,
                     selected: selected,
                     emptyColor: colorScheme.surfaceContainerHighest,
+                    boardLayoutMetrics: _boardLayoutMetrics,
                     onTap: piece == null ? null : () => _onPieceSelected(index),
                     onDragStarted: piece == null
                         ? null
@@ -656,6 +746,7 @@ class _BoardView extends StatelessWidget {
     required this.selectedPiece,
     required this.onCellTapped,
     required this.onPieceDropped,
+    required this.onLayoutMetricsChanged,
   });
 
   final BoardConfig config;
@@ -663,6 +754,7 @@ class _BoardView extends StatelessWidget {
   final BlockPiece? selectedPiece;
   final void Function(int row, int col) onCellTapped;
   final void Function(TrayPieceDragData data, int row, int col) onPieceDropped;
+  final ValueChanged<BoardLayoutMetrics> onLayoutMetricsChanged;
 
   bool _wouldPlacementFit(int anchorRow, int anchorCol) {
     final piece = selectedPiece;
@@ -692,18 +784,22 @@ class _BoardView extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final maxSide = math.min(constraints.maxWidth, constraints.maxHeight);
-        final aspectRatio = config.columns / config.rows;
-        late double boardWidth;
-        late double boardHeight;
+        final dimensions = BoardLayoutMetrics.boardDimensions(
+          config: config,
+          maxWidth: constraints.maxWidth,
+          maxHeight: constraints.maxHeight,
+        );
+        final boardWidth = dimensions.boardWidth;
+        final boardHeight = dimensions.boardHeight;
+        final layoutMetrics = BoardLayoutMetrics.fromBoardSize(
+          config: config,
+          boardWidth: boardWidth,
+          boardHeight: boardHeight,
+        );
 
-        if (aspectRatio >= 1) {
-          boardWidth = maxSide;
-          boardHeight = maxSide / aspectRatio;
-        } else {
-          boardHeight = maxSide;
-          boardWidth = maxSide * aspectRatio;
-        }
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          onLayoutMetricsChanged(layoutMetrics);
+        });
 
         return SizedBox(
           width: boardWidth,
@@ -716,11 +812,11 @@ class _BoardView extends StatelessWidget {
             ),
             child: GridView.builder(
               physics: const NeverScrollableScrollPhysics(),
-              padding: const EdgeInsets.all(4),
+              padding: const EdgeInsets.all(kBoardGridPadding),
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: config.columns,
-                mainAxisSpacing: 2,
-                crossAxisSpacing: 2,
+                mainAxisSpacing: kBoardGridSpacing,
+                crossAxisSpacing: kBoardGridSpacing,
               ),
               itemCount: config.rows * config.columns,
               itemBuilder: (context, index) {
@@ -779,6 +875,7 @@ class _PieceTraySlot extends StatelessWidget {
     required this.trayIndex,
     required this.selected,
     required this.emptyColor,
+    required this.boardLayoutMetrics,
     required this.onTap,
     required this.onDragStarted,
   });
@@ -787,6 +884,7 @@ class _PieceTraySlot extends StatelessWidget {
   final int trayIndex;
   final bool selected;
   final Color emptyColor;
+  final BoardLayoutMetrics? boardLayoutMetrics;
   final VoidCallback? onTap;
   final VoidCallback? onDragStarted;
 
@@ -827,22 +925,31 @@ class _PieceTraySlot extends StatelessWidget {
     }
 
     final dragData = TrayPieceDragData(piece: piece, trayIndex: trayIndex);
+    final metrics = boardLayoutMetrics;
 
     return Draggable<TrayPieceDragData>(
       data: dragData,
       onDragStarted: onDragStarted,
+      dragAnchorStrategy: metrics == null
+          ? childDragAnchorStrategy
+          : _pieceAnchorDragAnchorStrategy,
       feedback: Material(
-        elevation: 6,
-        borderRadius: BorderRadius.circular(8),
-        color: Theme.of(context).colorScheme.surface,
-        child: SizedBox(
-          width: 72,
-          height: 72,
-          child: Padding(
-            padding: const EdgeInsets.all(6),
-            child: _PiecePreview(piece: piece),
-          ),
-        ),
+        elevation: 4,
+        color: Colors.transparent,
+        shadowColor: Colors.black26,
+        child: metrics == null
+            ? SizedBox(
+                width: 72,
+                height: 72,
+                child: Padding(
+                  padding: const EdgeInsets.all(6),
+                  child: _PiecePreview(piece: piece),
+                ),
+              )
+            : _PiecePreview(
+                piece: piece,
+                layoutMetrics: metrics,
+              ),
       ),
       childWhenDragging: _slotContainer(
         context,
@@ -865,12 +972,20 @@ class _PieceTraySlot extends StatelessWidget {
 }
 
 class _PiecePreview extends StatelessWidget {
-  const _PiecePreview({required this.piece});
+  const _PiecePreview({
+    required this.piece,
+    this.layoutMetrics,
+  });
 
   final BlockPiece piece;
+  final BoardLayoutMetrics? layoutMetrics;
 
   @override
   Widget build(BuildContext context) {
+    if (layoutMetrics != null) {
+      return _buildBoardScaledPreview(layoutMetrics!);
+    }
+
     return LayoutBuilder(
       builder: (context, constraints) {
         final cellSize = math.min(
@@ -878,31 +993,60 @@ class _PiecePreview extends StatelessWidget {
           constraints.maxHeight / piece.height,
         );
 
-        return SizedBox(
-          width: cellSize * piece.width,
-          height: cellSize * piece.height,
-          child: Stack(
-            children: [
-              for (final cell in piece.cells)
-                Positioned(
-                  left: (cell.col - piece.minCol) * cellSize,
-                  top: (cell.row - piece.minRow) * cellSize,
-                  width: cellSize,
-                  height: cellSize,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: piece.color,
-                      borderRadius: BorderRadius.circular(2),
-                      border: Border.all(
-                        color: Colors.black.withValues(alpha: 0.2),
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
+        return _buildCellStack(
+          cellWidth: cellSize,
+          cellHeight: cellSize,
+          crossAxisSpacing: 0,
+          mainAxisSpacing: 0,
         );
       },
+    );
+  }
+
+  Widget _buildBoardScaledPreview(BoardLayoutMetrics metrics) {
+    return _buildCellStack(
+      cellWidth: metrics.cellWidth,
+      cellHeight: metrics.cellHeight,
+      crossAxisSpacing: metrics.crossAxisSpacing,
+      mainAxisSpacing: metrics.mainAxisSpacing,
+    );
+  }
+
+  Widget _buildCellStack({
+    required double cellWidth,
+    required double cellHeight,
+    required double crossAxisSpacing,
+    required double mainAxisSpacing,
+  }) {
+    final width = piece.width * cellWidth +
+        math.max(0, piece.width - 1) * crossAxisSpacing;
+    final height = piece.height * cellHeight +
+        math.max(0, piece.height - 1) * mainAxisSpacing;
+
+    return SizedBox(
+      width: width,
+      height: height,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          for (final cell in piece.cells)
+            Positioned(
+              left: (cell.col - piece.minCol) * (cellWidth + crossAxisSpacing),
+              top: (cell.row - piece.minRow) * (cellHeight + mainAxisSpacing),
+              width: cellWidth,
+              height: cellHeight,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: piece.color,
+                  borderRadius: BorderRadius.circular(2),
+                  border: Border.all(
+                    color: Colors.black.withValues(alpha: 0.2),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
