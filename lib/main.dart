@@ -125,14 +125,6 @@ class BoardLayoutMetrics {
       );
 }
 
-Offset _pieceAnchorDragAnchorStrategy(
-  Draggable<Object> draggable,
-  BuildContext context,
-  Offset position,
-) {
-  return position;
-}
-
 /// A cell offset relative to a piece anchor (top-left).
 class CellOffset {
   const CellOffset(this.row, this.col);
@@ -930,9 +922,7 @@ class _PieceTraySlot extends StatelessWidget {
     return Draggable<TrayPieceDragData>(
       data: dragData,
       onDragStarted: onDragStarted,
-      dragAnchorStrategy: metrics == null
-          ? childDragAnchorStrategy
-          : _pieceAnchorDragAnchorStrategy,
+      dragAnchorStrategy: pointerDragAnchorStrategy,
       feedback: Material(
         elevation: 4,
         color: Colors.transparent,
